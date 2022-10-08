@@ -361,18 +361,6 @@ class Section:
         if len(self.students) < self.capacity.maximum:
             return self.add(student, type)
         return False
-    
-    def dropout(self, student: Student, type: Type, permanent: bool = None):
-        assert student in self.students
-        self.students.remove(student)
-        student.sections.pop(student.takes.pop(type))
-        if self.session:
-            student.sessions.remove(self.session.partition)
-        if not student.takes:
-            student.shift = None
-        if permanent:
-            if student.rankings.current(type) == self.parent:
-                student.rankings.final.pop(type, 'Dropped out')
 
 
 class Category:
