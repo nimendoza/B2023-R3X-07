@@ -447,148 +447,134 @@ class AllocateAgent:
                                     student.rankings.current(self.types[MATH]).overload(student, self.types[MATH])
                                 return True
                             
+        def enroll_type(student: Student, type: Type):
+            research = random.choice(list(student.grade_level.categories[(self.types[RESEARCH], False)]))            
+            category = student.rankings.current(type)
+            for shift in self.shifts:
+                for c in category.list_sections_by(shift):
+                    for r in research.list_sections_by(shift):
+                        if all([
+                            c.session.partition != r.session.partition,
+                            len(c.students) < c.capacity.maximum,
+                            len(r.students) < r.capacity.maximum if any(len(s.students) < s.capacity.maximum for s in research.sections) else True
+                        ]):
+                            assert c.enroll(student, type) and (r.enroll(student, self.types[RESEARCH]) or research.overload(student, self.types[RESEARCH]))
+                            if not student.rankings.current(self.types[MATH]).enroll(student, self.types[MATH]):
+                                student.rankings.current(self.types[MATH]).overload(student, self.types[MATH])
+                            return True
+                            
         for student in self.nogroup_students:
             research = random.choice(list(student.grade_level.categories[(self.types[RESEARCH], False)]))  
             if not research.sections:
                 for shift in self.shifts:
                     for partition in shift.partitions:
                         research.sections.add(Section(research, shift, self.get_session(research, shift, partition)))
-            if not enroll(student):
-                for type in [self.types[CORE], self.types[ELEC]]:
+                for _ in range(2):
+                    shift = random.choice(self.shifts)
+                    research_section = Section(research, shift, self.get_session(research, shift, random.choice(list(shift.partitions))))
+                    research.sections.add(research_section)
+            if not enroll(student) and all(not enroll_type(student, type) for type in [self.types[CORE], self.types[ELEC]]):
+                if not research.enroll(student, self.types[RESEARCH]):
+                    research.overload(student, self.types[RESEARCH])
+                if not student.rankings.current(self.types[MATH]).enroll(student, self.types[MATH]):
+                    student.rankings.current(self.types[MATH]).overload(student, self.types[MATH])
+                self.section_student(student, self.types[CORE], student.shift, student.available_partitions)
+            for type in filter(lambda x: x not in student.takes, [self.types[CORE], self.types[ELEC]]):
+                student.rankings.current(type).enroll(student, type)
+        for category in self.categories:
+            for section in filter(lambda x: len(x.students) < x.capacity.minimum, list(category.sections)):
+                for student in list(section.students):
+                    for type, _ in filter(lambda x: x[1] == category, list(student.takes.items())):
+                        student.sections.pop(student.takes.pop(type)).students.remove(student)
+                        student.sessions.remove(section.session.partition)
+                category.sections.remove(section)
+        for student in self.students:
+            for type in filter(lambda x: x not in student.takes, [self.types[CORE], self.types[ELEC]]):
+                student.rankings.current(type).enroll(student, type)
+                
+        for _ in range(10):
+            demand = defaultdict[Category, set[tuple[Type, Student]]](set)
+            for student in self.students:
+                for type in filter(lambda x: x not in student.takes, [self.types[CORE], self.types[ELEC]]):
                     category = student.rankings.current(type)
-                    category.enroll(student, type)
-                if student.shift:
-                    if not student.rankings.current(self.types[MATH]).enroll(student, self.types[MATH]):
-                        student.rankings.current(self.types[MATH]).overload(student, self.types[MATH])
-                    research.enroll(student, self.types[RESEARCH])
-            continue
-            core = student.rankings.current(self.types[CORE])
-            elec = student.rankings.current(self.types[ELEC])
-            core.enroll(student, self.types[CORE])
-            elec.enroll(student, self.types[ELEC])
-            if student.shift:
-                if not student.rankings.current(self.types[MATH]).enroll(student, self.types[MATH]):
-                    student.rankings.current(self.types[MATH]).overload(student, self.types[MATH])
-        for student in self.nogroup_students:
-            research = random.choice(list(student.grade_level.categories[(self.types[RESEARCH], False)]))
-            for research_section in list(research.sections):
-                if not research_section.students:
-                    research.sections.remove(research_section)
-        return
-        for _ in range(10):
-            shifted_demand = dict[Shift, defaultdict[Category, set[tuple[Type, Student]]]]((shift, defaultdict(set)) for shift in self.shifts)
-            noshift_demand = defaultdict[Category, set[tuple[Type, Student]]](set)
-            for student in self.nogroup_students:
-                for type in filter(lambda x: x not in student.takes, [self.types[CORE], self.types[ELEC]]):
-                    if student.shift:
-                        shifted_demand[student.shift][student.rankings.current(type)].add((type, student))
+                    if not category.enroll(student, type):
+                        demand[category].add((type, student))
+            for category, pairs in demand.items():
+                partitioned = defaultdict[tuple[Shift, Partition], set[tuple[Type, Student]]](set)
+                for type, student in pairs:
+                    for partition in student.available_partitions:
+                        partitioned[(student.shift, partition)].add((type, student))
+                shift, partition = max(partitioned, key=lambda x: len(partitioned[x]))
+                if len(partitioned[(shift, partition)]) >= category.capacity_section.minimum:
+                    if category.could_open_section():
+                        category.sections.add(Section(category, shift, self.get_session(category, shift, partition)))
+                        for type, student in pairs:
+                            category.enroll(student, type)
                     else:
-                        noshift_demand[student.rankings.current(type)].add((type, student))
-            for shift, demand in shifted_demand.items():
-                for category, pairs in sorted(demand.items(), key=lambda x: len(x[1]), reverse=True):
-                    partitioned = defaultdict[Partition, set[tuple[Type, Student]]](set)
+                        for type, student in pairs:
+                            student.rankings.final.pop(type, 'Cannot open anymore rooms')
+                            if self.types[ELEC] not in student.takes:
+                                core = student.rankings.current(self.types[CORE]) if self.types[CORE] not in student.takes else student.takes[self.types[CORE]]
+                                elec = student.rankings.current(self.types[ELEC])
+                                while core == elec or elec in core.not_alongside:
+                                    student.rankings.final.pop(self.types[ELEC], 'Not compatible with Core science')
+                                    elec = student.rankings.current(self.types[ELEC])
+                            if self.types[CORE] not in student.takes and self.types[ELEC] in student.takes:
+                                elec = student.takes[self.types[ELEC]]
+                                core = student.rankings.current(self.types[CORE])
+                                countdown = 10
+                                while core == elec or core in elec.not_alongside:
+                                    student.rankings.final.pop(self.types[CORE], 'Not compatible with Core science')
+                                    core = student.rankings.current(self.types[CORE])
+                                    countdown -= 1
+                                    if not countdown:
+                                        assert False
+                else:
                     for type, student in pairs:
-                        for partition in student.available_partitions:
-                            partitioned[partition].add((type, student))
-                    for partition, pairs_ in sorted(partitioned.items(), key=lambda x: len(x[1]), reverse=True):
-                        if len(pairs_) + len(noshift_demand[category]) >= category.capacity_section.minimum and category.could_open_section():
-                            category.sections.add(Section(category, shift, self.get_session(category, shift, partition)))
-                            for type, student in pairs:
-                                category.enroll(student, type)
-                            for type, student in list(noshift_demand[category]):
-                                if category.enroll(student, type):
-                                    noshift_demand[category].remove((type, student))
-                            break
-        for student in self.nogroup_students:
-            if self.types[CORE] in student.takes and self.types[ELEC] in student.takes and self.types[RESEARCH] not in student.takes:
-                research = random.choice(list(student.grade_level.categories[(self.types[RESEARCH], False)]))  
-                research.enroll(student, self.types[RESEARCH])
-            if student.shift and self.types[MATH] not in student.takes:
-                if not student.rankings.current(self.types[MATH]).enroll(student, self.types[MATH]):
-                    student.rankings.current(self.types[MATH]).overload(student, self.types[MATH])
+                        student.rankings.final.pop(type, 'Too few demand to open another room')
+                        if self.types[ELEC] not in student.takes:
+                            core = student.rankings.current(self.types[CORE]) if self.types[CORE] not in student.takes else student.takes[self.types[CORE]]
+                            elec = student.rankings.current(self.types[ELEC])
+                            while core == elec or elec in core.not_alongside:
+                                student.rankings.final.pop(self.types[ELEC], 'Not compatible with Core science')
+                                elec = student.rankings.current(self.types[ELEC])
+                        if self.types[CORE] not in student.takes and self.types[ELEC] in student.takes:
+                            elec = student.takes[self.types[ELEC]]
+                            core = student.rankings.current(self.types[CORE])
+                            countdown = 10
+                            while core == elec or core in elec.not_alongside:
+                                student.rankings.final.pop(self.types[CORE], 'Not compatible with Core science')
+                                core = student.rankings.current(self.types[CORE])
+                                countdown -= 1
+                                if not countdown:
+                                    assert False
+                                
+        def enroll(student: Student):
+            for core in filter(lambda x: x.qualified(student), student.grade_level.categories[(self.types[CORE], True)]):
+                for elec in filter(lambda x: x != core and x not in core.not_alongside and x.qualified(student), student.grade_level.categories[(self.types[ELEC], True)]):
+                    for c in core.sections:
+                        for e in elec.sections:
+                            if all([
+                                c.session.partition in student.available_partitions,
+                                e.session.partition in student.available_partitions,
+                                c.session.partition != e.session.partition,
+                                len(c.students) < c.capacity.maximum,
+                                len(e.students) < e.capacity.maximum
+                            ]):
+                                assert c.enroll(student, self.types[CORE]) and e.enroll(student, self.types[ELEC])
+                                if core != student.rankings.current(self.types[CORE]):
+                                    student.rankings.final.pop(self.types[CORE], 'Needed to reshuffle sections')
+                                if elec != student.rankings.current(self.types[ELEC]):
+                                    student.rankings.final.pop(self.types[ELEC], 'Needed to reshuffle sections')
+                                return True
+                            
         for student in self.students:
-            for type in filter(lambda x: x not in student.takes, [self.types[CORE], self.types[ELEC]]):
-                for category in student.grade_level.categories[(type, True)]:
-                    if category.enroll(student, type):
-                        if category != student.rankings.initial(type) and student.rankings.initial(type):
-                            student.rankings.final.pop(type, 'No more rooms available')
-                        break
-            if self.types[RESEARCH] not in student.takes:
-                research = random.choice(list(student.grade_level.categories[(self.types[RESEARCH], False)]))  
-                research.enroll(student, self.types[RESEARCH])
-            if student.shift and self.types[MATH] not in student.takes:
-                if not student.rankings.current(self.types[MATH]).enroll(student, self.types[MATH]):
-                    student.rankings.current(self.types[MATH]).overload(student, self.types[MATH])
-        for student in self.nogroup_students:
-            research = random.choice(list(student.grade_level.categories[(self.types[RESEARCH], False)]))
-            for research_section in list(research.sections):
-                if not research_section.students:
-                    research.sections.remove(research_section)
-        
-        research_demand = dict[Category, defaultdict[tuple[Shift, Partition], set[tuple[Type, Student]]]]((random.choice(list(student.grade_level.categories[(self.types[RESEARCH], False)])), defaultdict(set)) for student in self.students)
-        for student in self.students:
-            research = random.choice(list(student.grade_level.categories[(self.types[RESEARCH], False)]))  
-            if self.types[RESEARCH] not in student.takes and not research.enroll(student, self.types[RESEARCH]):
-                # assert len(student.available_partitions) == 1
-                research_demand[research][(student.shift, random.choice(student.available_partitions))].add((self.types[RESEARCH], student))
-        for category, demand in research_demand.items():
-            for pair, pairs in sorted(demand.items(), key=lambda x: len(x[1]), reverse=True):
-                if category.could_open_section():
-                    category.sections.add(Section(category, pair[0], self.get_session(category, pair[0], pair[1])))
-                    for type, student in pairs:
-                        category.enroll(student, type)
-        for student in self.students:
-            if self.types[RESEARCH] not in student.takes:
-                for type, category in list(student.takes.items()):
-                    student.takes.pop(type)
-                    student.sections.pop(category).students.remove(student)
-                student.shift = None
-                student.sessions = set()
-                research = random.choice(list(student.grade_level.categories[(self.types[RESEARCH], False)]))  
-                if not enroll(student):
-                    if not research.enroll(student, self.types[RESEARCH]):
-                        research.overload(student, self.types[RESEARCH])
-                for type in filter(lambda x: x not in student.takes, [self.types[CORE], self.types[ELEC]]):
-                    for category in student.grade_level.categories[(type, True)]:
-                        if category.enroll(student, type):
-                            if category != student.rankings.initial(type) and student.rankings.initial(type):
-                                student.rankings.final.pop(type, 'No more rooms available')
-                            break
-                if student.shift and self.types[MATH] not in student.takes:
-                    if not student.rankings.current(self.types[MATH]).enroll(student, self.types[MATH]):
-                        student.rankings.current(self.types[MATH]).overload(student, self.types[MATH])
-        for _ in range(10):
-            shifted_demand = dict[Shift, defaultdict[Category, set[tuple[Type, Student]]]]((shift, defaultdict(set)) for shift in self.shifts)
-            noshift_demand = defaultdict[Category, set[tuple[Type, Student]]](set)
-            for student in self.nogroup_students:
-                for type in filter(lambda x: x not in student.takes, [self.types[CORE], self.types[ELEC]]):
-                    if student.shift:
-                        shifted_demand[student.shift][student.rankings.current(type)].add((type, student))
-                    else:
-                        noshift_demand[student.rankings.current(type)].add((type, student))
-            for shift, demand in shifted_demand.items():
-                for category, pairs in sorted(demand.items(), key=lambda x: len(x[1]), reverse=True):
-                    partitioned = defaultdict[Partition, set[tuple[Type, Student]]](set)
-                    for type, student in pairs:
-                        for partition in student.available_partitions:
-                            partitioned[partition].add((type, student))
-                    for partition, pairs_ in sorted(partitioned.items(), key=lambda x: len(x[1]), reverse=True):
-                        if len(pairs_) + len(noshift_demand[category]) >= category.capacity_section.minimum and category.could_open_section():
-                            category.sections.add(Section(category, shift, self.get_session(category, shift, partition)))
-                            for type, student in pairs:
-                                category.enroll(student, type)
-                            for type, student in list(noshift_demand[category]):
-                                if category.enroll(student, type):
-                                    noshift_demand[category].remove((type, student))
-                            break
-        for student in self.students:
-            for type in filter(lambda x: x not in student.takes, [self.types[CORE], self.types[ELEC]]):
-                for category in student.grade_level.categories[(type, True)]:
-                    if category.enroll(student, type):
-                        if category != student.rankings.initial(type) and student.rankings.initial(type):
-                            student.rankings.final.pop(type, 'No more rooms available')
-                        break
-            assert len(student.takes) == 4
+            if len(student.takes) != len(self.types):
+                for type in filter(lambda x: x in student.takes, [self.types[CORE], self.types[ELEC]]):
+                    section = student.sections.pop(student.takes.pop(type))
+                    student.sessions.remove(section.session.partition)
+                    section.students.remove(student)
+                assert enroll(student)
     
     def solve(self):
         self.preopen_sections(self.types[MATH])
@@ -647,13 +633,14 @@ def main():
             encode_agent = run()
         except:
                 continue
-        break
-        if min(AnalyzeAgent.score(encode_agent, True).values()) < 90:
+        if min(AnalyzeAgent.score(encode_agent, True).values()) < 95:
             encode_agent = None
             continue
         export(encode_agent, 'output', 'Test Results {}.xlsx')
-    AnalyzeAgent.score(encode_agent, True)
-    export(encode_agent, 'output', 'Test Results {}.xlsx')
+    # AnalyzeAgent.score(encode_agent, True)
+    # export(encode_agent, 'output', 'Test Results {}.xlsx')
 
 if __name__ == '__main__':
+    # encode_agent = run()
+    # AnalyzeAgent.score(encode_agent, True)
     main()
