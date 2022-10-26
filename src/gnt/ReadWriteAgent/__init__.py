@@ -1,9 +1,9 @@
-# These imports are needed to have the ReadWriteAgent run
-from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
+# These imports are needed to have this segment of the software run
+from openpyxl                      import load_workbook
+from openpyxl.utils                import get_column_letter
 from openpyxl.worksheet._read_only import ReadOnlyWorksheet
-from openpyxl.worksheet.worksheet import Worksheet
-from os import walk
+from openpyxl.worksheet.worksheet  import Worksheet
+from os      import walk
 from os.path import exists
 from xlsxwriter import Workbook
 

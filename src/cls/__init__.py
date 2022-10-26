@@ -1,7 +1,9 @@
-# These imports are needed to have the abstractions run
-from __future__ import annotations
+# These imports are needed to have this segment of the software run
+from __future__  import annotations
 from collections import defaultdict
-from typing import Iterable
+from typing      import Iterable
+
+import random
 
 # Capacity abstraction implemented in Python 3.10.6
 class Capacity:
@@ -25,8 +27,7 @@ class Session:
   def __repr__(self):
     return self.alias
   
-  # Way to distinguish whether an instance of this class is “lesser than”
-  # another instance of this class
+  # Sorting mechanism for instances of this class
   def __lt__(self, other: Session):
     return self.alias < other.alias
   
@@ -40,9 +41,13 @@ class Shift:
     
   # String representation of any instance of this class
   def __repr__(self):
-    return ''.join(map(str, self.sessions))
+    return ''.join(sorted(map(str, self.sessions)))
   
-  # Add a session to an instance of this class
+  # Sorting mechanism for instances of this class
+  def __lt__(self, other: Shift):
+    return str(self) < str(other)
+  
+  # Add a session
   def add(self, session: Session):
     self.sessions.add(session)
     
@@ -62,6 +67,10 @@ class ParallelSession:
   def __repr__(self):
     return '{}{}'.format(self.session, self.index or '')
   
+  # Sorting mechanism for instances of this class
+  def __lt__(self, other: ParallelSession):
+    return str(self) < str(other)
+  
 # Course type abstraction implementation in Python 3.10.6
 class CourseType:
   alias: str
@@ -76,8 +85,7 @@ class CourseType:
   def __repr__(self):
     return self.alias
   
-  # Way to distinguish whether an instance of this class is “lesser than”
-  # another instance of this class
+  # Sorting mechanism for instances of this class
   def __lt__(self, other: CourseType):
     return self.order < other.order
   
@@ -95,9 +103,11 @@ class GradeLevel:
   def __repr__(self):
     return f'Grade {self.alias}'
   
-
-  # Add a course, given its course type and whether it is ranked, to an
-  # instance of this class
+  # Sorting mechanism for instances of this class
+  def __lt__(self, other: GradeLevel):
+    return self.alias < other.alias
+  
+  # Add a course, given its course type and whether a student ranks it
   def add(self, course_type: CourseType, ranked: bool, course: Course):
     self.courses[(course_type, ranked)].add(course)
     
@@ -119,17 +129,16 @@ class Ranking:
           if ranked
     )
     
-  # Given the course type, determine the number of courses ranked
+  # Get the number of items in the rankings of a course type
   def len(self, course_type: CourseType):
     return len(self.ordered_courses[course_type])
   
-  # Add a course to the rankings of the given course type. A last-in-last-
-  # out (LILO) basis is observed in the rankings.
+  # Add a course to the rankings of a course type
   def add(self, course_type: CourseType, course: Course):
     self.ordered_courses[course_type].append(course)
     
-  # Remove a course of a given course type, and note the reason to why
-  # it was removed from the rankings
+  # Remove the index-th course from the rankings of a course type, and also
+  # record the reason for being removed
   def pop(self, course_type: CourseType, reason: str, index: int):
     course = self.ordered_courses[course_type].pop(index)
     self.reason_rejected[course_type][course] = reason
@@ -146,31 +155,28 @@ class Rankings:
     self.start = Ranking(owner.grade_level)
     self.final = Ranking(owner.grade_level)
     
-
-  # Add a course of a given course type to both start and final rankings if
-  # and only if the owner is qualified to take the course
+  # Add a course to the initial and final rankings of a course type
   def add(self, course_type: CourseType, course: Course):
     if course.qualified(self.owner):
       self.start.add(course_type, course)
       self.final.add(course_type, course)
       
-  # Return the index-th (or, if index is not given, first) course
-  # in the initial (“start”) rankings of a given course type. 
-  # If the ranking is empty, return None
+  # Get the index-th initial rankings of a course type. Returns None if  
+  # the student does not qualify for all of the input ranked courses 
   def initial(self, course_type: CourseType, index: int | None = None):
     if self.start.len(course_type) == 0:
       return None
     return self.start.ordered_courses[course_type][index or 0]
-  
-  # Return the index-th (or, if index is not given, first) course in
-  # the current (“final”) rankings of a given course type. If the
-  # ranking is empty, “reset” the rankings according to whatever
-  # courses the student (“owner”) is qualified to take
+    
+  # Get the index-th final rankings of a course type. In the case that the
+  # student was rejected by all of its initially ranked courses,
+  # arbitrarily rank the courses that the student qualifies for
   def current(self, course_type: CourseType, index: int | None = None):
     if self.final.len(course_type) == 0:
       for course in self.owner.grade_level.courses[(course_type, True)]:
         if course.qualified(self.owner):
           self.final.add(course_type, course)
+      random.shuffle(self.final.ordered_courses[course_type])
     return self.final.ordered_courses[course_type][index or 0]
   
 # Student abstraction implementation in Python 3.10.6
@@ -197,10 +203,13 @@ class Student:
     self.attending_sections = dict()
     self.__shift = None
     
-
   # String representation of any instance of this class
   def __repr__(self):
     return f'{self.grade_level}-{self.alias}'
+  
+  # Sorting mechanism for instances of this class
+  def __lt__(self, other: Student):
+    return str(self) < str(other)
   
   # This property was implemented instead of simply renaming “__shift” to
   # “shift” due to additional steps done when assigning a value to “shift”
@@ -216,13 +225,11 @@ class Student:
     self.__shift = value
     if self.research_group and self.research_group.shift != value:
       self.research_group.shift = value
-    for section in filter(
-      lambda section: section.shift != value,
-      self.attending_sections.values()
-    ):
-      section.shift = value
-      
-  # Return the available sessions of this student
+    for section in self.attending_sections.values():
+      if section.shift != value:
+        section.shift = value
+        
+  # Get the available sessions of this student
   @property
   def available_sessions(self):
     sessions = set[Session]()
@@ -231,7 +238,7 @@ class Student:
       sessions.difference_update(self.attending_sessions)
     return sorted(sessions)
   
-# Group abstraction implementation in Python 3.10.6
+# Research group abstraction implementation in Python 3.10.6
 class ResearchGroup:
   alias: str
   parent: Course
@@ -249,7 +256,6 @@ class ResearchGroup:
   def __repr__(self):
     return f'{self.parent} {self.alias}'
   
-
   # This property was implemented instead of simply renaming “__shift” to
   # “shift” due to additional steps done when assigning a value to “shift”
   @property
@@ -262,13 +268,11 @@ class ResearchGroup:
   @shift.setter
   def shift(self, value: Shift):
     self.__shift = value
-    for student in filter(
-      lambda student: student.shift != value,
-      self.students
-    ):
-      student.shift = value
-      
-  # Return the available sessions of the students in this group
+    for student in self.students:
+      if student.shift != value:
+        student.shift = value
+        
+  # Get the available sessions of the students in this group
   @property
   def available_sessions(self):
     sessions = set[Session]()
@@ -278,7 +282,7 @@ class ResearchGroup:
       sessions.difference_update(student.attending_sessions)
     return sorted(sessions)
   
-  # Add a student to this group
+  # Add a student
   def add(self, student: Student):
     student.research_group = self
     self.students.add(student)
@@ -295,12 +299,11 @@ class Section:
   parallel_session: ParallelSession | None
   __shift: Shift | None
   
-
   # Initialize the instance of this class
   def __init__(
-    self, 
-    parent: Course, 
-    shift: Shift | None, 
+    self,
+    parent: Course,
+    shift: Shift | None,
     parallel_session: ParallelSession | None
   ):
     self.parent = parent
@@ -312,7 +315,7 @@ class Section:
   # String representation of any instance of this class
   def __repr__(self):
     return '{} {}'.format(
-      self.parent, 
+      self.parent,
       self.parallel_session or self.shift
     )
     
@@ -322,16 +325,16 @@ class Section:
   def shift(self):
     return self.__shift
   
-  # Return the available sessions of the students in this section
+  # Every time the “shift” value is changed, also change the affected
+  # students’ shifts in the case that they differ from the assigned 
+  # value.
   @shift.setter
   def shift(self, value: Shift):
     self.__shift = value
-    for student in filter(
-      lambda student: student.shift != value,
-      self.students
-    ):
-      student.shift = value
-      
+    for student in self.students:
+      if student.shift != value:
+        student.shift = value
+        
   # A student is only qualified to to part of a section if and only if:
   # 1. The student qualifies to the course
   # 2. The student has no shift, or the same shift as the section
@@ -344,8 +347,7 @@ class Section:
         if self.parallel_session and student.shift else True
     ])
     
-
-  # Add a student to this section
+  # Add a student, given that they are qualified
   def add(self, student: Student, course_type: CourseType):
     if self.qualified(student):
       if self.shift:
@@ -356,19 +358,17 @@ class Section:
       student.courses_taking[course_type] = self.parent
       student.attending_sections[self.parent] = self
       if self.parallel_session:
-        student.attending_sessions.add(
-          self.parallel_session.session
-        )
+        student.attending_sessions.add(self.parallel_session.session)
       return True
     return False
   
-  # Add a student to this section, regardless of the number of students
-  # attending this section
+  # Add a student, regardless of the number of students attending this
+  # section, given that they are qualified
   def overload(self, student: Student, course_type: CourseType):
     return self.add(student, course_type)
   
-  # Add a student to this section—rejecting the student if the number of
-  # students exceed or equal the maximum capacity of this section
+  # Add a student if anf only if there are remaining slots, given that they
+  # are qualified
   def enroll(self, student: Student, course_type: CourseType):
     if len(self.students) < self.capacity.maximum:
       return self.add(student, course_type)
@@ -393,33 +393,30 @@ class Course:
     self.capacity_section = None  # type: ignore
     self.capacity_sections = None  # type: ignore
     self.sections = set()
-    self.not_alongside = set([self])
+    self.not_alongside = {self}
     self.prerequisites = set()
     
-
   # String representation of any instance of this class
   def __repr__(self):
     return '{}{}'.format(
       self.alias,
-      f' Level {self.difficulty_level}'
-        if self.difficulty_level else ''
+      f' Level {self.difficulty_level}' if self.difficulty_level else ''
     )
     
-  # Return whether this course could open a section
+  # Returns whether this course could open a section
   @property
   def could_open_section(self):
-    courses = list(
-      course for course in [self, self.linked_to] if course
-    )
+    courses = list(course for course in [self, self.linked_to] if course)
     return sum(
       len(course.sections) for course in courses
     ) < self.capacity_sections.maximum
-  
+    
   # Add a course that shouldn’t be taken alongside this course
   def add_not_alongside(self, not_alongside: Course):
     self.not_alongside.add(not_alongside)
     
-  # Add a course that is a prerequisite of this course 
+  # Add a list of courses of which any must be taken to possibly qualify in
+  # taking the course
   def add_prerequisites(self, prerequisites: Iterable[Course]):
     self.prerequisites.add(prerequisites)
     
@@ -427,11 +424,10 @@ class Course:
   def list_sections_by(self, value: Session | Shift):
     result = list[Section]()
     for section in self.sections:
-      if value in {
-        section.shift,
-        section.parallel_session.session
-          if section.parallel_session else value
-      }:
+      if isinstance(value, Session) and section.parallel_session:
+        if section.parallel_session.session == value:
+          result.append(section)
+      elif isinstance(value, Shift) and section.shift in {value, None}:
         result.append(section)
     return result
   
@@ -452,9 +448,9 @@ class Course:
     
   # Overload a student to a section of this course. If the course has 
   # shifted sections, and any of them could accept the student without 
-  # being overloaded, the section with fewest students will be prioritized. 
-  # Shifted sections are overloaded if ever there aren’t any nonshifted 
-  # sections
+  # being overloaded, the section with fewest students will be 
+  # prioritized. Shifted sections are overloaded if ever there aren’t any 
+  # nonshifted sections
   def overload(self, student: Student, course_type: CourseType):
     shifted = list(filter(
       lambda section: section.shift and section.qualified(student),
@@ -465,29 +461,28 @@ class Course:
       self.sections
     ))
     if noshift:
-      for section in filter(
-        lambda section: len(section.students) >= section.capacity.maximum,
-        list(shifted)
-      ):
-        shifted.pop(shifted.index(section))
+      for section in list(shifted):
+        if len(section.students) >= section.capacity.maximum:
+          shifted.pop(shifted.index(section))
     if shifted:
       return min(
         shifted,
         key=lambda section: len(section.students)
       ).overload(student, course_type)
     if noshift:
-      return min(
+      return max(
         noshift,
         key=lambda section: len(section.students)
       ).overload(student, course_type)
     return False
-  # Enroll a student to this course. Unlike the previous function, 
-  # this function takes into consideration the capacities of sections
+  
+  # Enroll a student to this course. Unlike the previous function, this 
+  # function takes into consideration the capacities of sections
   def enroll(self, student: Student, course_type: CourseType):
-    shifted = list(filter(
+    shifted = sorted(filter(
       lambda section: section.shift and section.qualified(student),
       self.sections
-    ))
+    ), key=lambda section: len(section.students))
     noshift = list(filter(
       lambda section: not section.shift and section.qualified(student),
       self.sections

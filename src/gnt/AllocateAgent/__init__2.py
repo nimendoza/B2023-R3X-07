@@ -16,7 +16,6 @@ class AllocateAgent:
   shifts: list[Shift]
   courses: list[Course]
   course_types: dict[str, CourseType]
-  finyear_students: set[Student]
   __research_groups: list[ResearchGroup]
   __students: list[Student]
   __grouped_students: list[Student]
@@ -27,9 +26,6 @@ class AllocateAgent:
     self.course_types = encode_agent.course_types
     self.shifts = list(encode_agent.shifts)
     self.courses = list(encode_agent.courses.values())
-    self.finyear_students = set(encode_agent.students[
-      encode_agent.grade_levels['Grade 12']
-    ])
     self.__students = list()
     
     research_groups = set[ResearchGroup]()
@@ -74,47 +70,43 @@ class AllocateAgent:
     random.shuffle(self.__nogroup_students)
     return self.__nogroup_students
   
+  # Open mathematics level sections based on demand
   def open_math_sections(self, course_type: CourseType):
-    math_courses = set[Course](
-      student.rankings.current(course_type) for student in self.students
+    demand = defaultdict[Course, int](int)
+    for student in self.students:
+      demand[student.rankings.current(course_type)] += 1
+      
+    sections_to_open = dict(
+      (course, ceil(demand[course] / course.capacity_section.maximum))
+        for course in demand
     )
-    for math_course in math_courses:
-      for shift in self.shifts:
-        section = Section(math_course, shift, None)
-        math_course.sections.add(section)
+    for course in sections_to_open:
+      if course.linked_to:
+        while (
+          sum(sections_to_open[c] for c in [course, course.linked_to])
+            > course.capacity_sections.maximum
+        ):
+          minimum = course if (
+            demand[course] % course.capacity_section.maximum
+              < demand[course.linked_to] % course.capacity_section.maximum
+          ) else course.linked_to
+          sections_to_open[minimum] -= 1
+      else:
+        sections_to_open[course] = min(
+          sections_to_open[course],
+          course.capacity_sections.maximum
+        )
+    for course, amount in sections_to_open.items():
+      for _ in range(amount):
+        section = Section(course, None, None)
+        course.sections.add(section)
         
-  def reorganize_senior_students(self):
-    def has_taken_level_two(student: Student):
-      for course in student.courses_taken:
-        if course.difficulty_level == 2:
-          self.finyear_students.remove(student)
-          return True
-      return False
-    
-    for student in list(self.finyear_students):
-      if not has_taken_level_two(student):
-        core = student.rankings.initial(self.course_types[CORE])
-        if not core or (core and core.difficulty_level != 2):
-          while student.rankings.current(
-            self.course_types[ELEC]
-          ).difficulty_level != 2:
-            student.rankings.final.pop(
-              self.course_types[ELEC], 'Needs to take a level 2 course', 0
-            )
-        if not student.research_group:
-          research = random.choice(list(student.grade_level.courses[(
-            self.course_types[RESEARCH], False
-          )]))
-          student.research_group = ResearchGroup('Temporary', research)
-          
-  def get_parallel_session(
-    self, 
-    course: Course, 
-    shift: Shift, 
-    session: Session
-  ):
+  # Return the ParallelSession for which the course has available
+  def get_parallel_session(self, course: Course, shift: Shift, session: Session):
     return ParallelSession(
-      shift, session, len(course.list_sections_by(session))
+      shift, 
+      session, 
+      len(course.list_sections_by(session))
     )
     
   # Try to section a student according to the highest ranking course
@@ -135,7 +127,10 @@ class AllocateAgent:
       return False
     student.rankings.final.pop(course_type, 'Not qualified', 0)
     return self.try_section_student(
-      student, course_type, shift, available_sessions
+      student, 
+      course_type, 
+      shift, 
+      available_sessions
     )
   
   # Section a student accourding to the highest ranking course that
@@ -160,7 +155,9 @@ class AllocateAgent:
           course,
           shift,
           self.get_parallel_session(
-            course, shift, random.choice(available_sessions)
+            course, 
+            shift,
+            random.choice(available_sessions)
           )
         )
         course.sections.add(section)
@@ -171,27 +168,30 @@ class AllocateAgent:
       student.rankings.final.pop(course_type, 'Not qualified', 0)
     self.section_student(student, course_type, shift, available_sessions)
   
+  # Allocate students with research groups to courses
   def section_grouped(self):
-    research_courses = set[Course](
-      group.parent for group in self.research_groups
-    )
-    for course in research_courses:
-      for shift in self.shifts:
-        for session in shift.sessions:
-          course.sections.add(Section(
-            course, shift, self.get_parallel_session(
-              course, shift, session
-            )
-          ))    
     for research_group in self.research_groups:
+      if not research_group.parent.sections:
+        for shift in self.shifts:
+          for session in shift.sessions:
+            research_group.parent.sections.add(Section(
+              research_group.parent,
+              shift,
+              self.get_parallel_session(
+                research_group.parent, 
+                shift, 
+                session
+              )
+            ))
+
       demand = defaultdict[Course, int](int)
       for student in research_group.students:
         core = student.rankings.current(self.course_types[CORE])
         elec = student.rankings.current(self.course_types[ELEC])
         while elec in core.not_alongside:
           student.rankings.final.pop(
-            self.course_types[ELEC], 
-            'Could not be taken alongside Core Science',
+            self.course_types[ELEC],
+            'Could not be taken alongside Core science',
             0
           )
           elec = student.rankings.current(self.course_types[ELEC])
@@ -199,32 +199,37 @@ class AllocateAgent:
         demand[elec] += 1
       
       section_combinations = defaultdict[
-        Shift, set[tuple[Student, Section, Section]]
+        Shift,
+        set[tuple[Student, Section, Section]]
       ](set)
       for student in research_group.students:
         core = student.rankings.current(self.course_types[CORE])
         elec = student.rankings.current(self.course_types[ELEC])
         for csection in filter(
-          lambda s: len(s.students) + demand[core] <= s.capacity.maximum,
+          lambda s: 
+            len(s.students) + demand[core] <= s.capacity.maximum,
           core.sections
         ):
           for esection in filter(
-            lambda s: len(s.students) + demand[core] <= s.capacity.maximum,
-            elec.sections
+            lambda s:
+              len(s.students) + demand[elec] <= s.capacity.maximum,
+              elec.sections
           ):
             if all([
               csection.shift == esection.shift,
-              csection.parallel_session.session
-              != esection.parallel_session.session
-                if csection.parallel_session and esection.parallel_session
-                else True
+              csection.parallel_session.session 
+                != esection.parallel_session.session
+                if csection.parallel_session
+                  and esection.parallel_session
+                  else True,
             ]) and csection.shift:
-              section_combinations[csection.shift].add((
-                student, csection, esection
-              ))
+              section_combinations[csection.shift].add(
+                (student, csection, esection)
+              )
       
       section_excluded_sessions = defaultdict[
-        tuple[Shift, Session], set[tuple[Student, Section, Section]]
+        tuple[Shift, Session],
+        set[tuple[Student, Section, Section]]
       ](set)
       for shift in section_combinations:
         for session in shift.sessions:
@@ -235,9 +240,9 @@ class AllocateAgent:
               and esection.parallel_session
               and esection.parallel_session.session != session
             ):
-              section_excluded_sessions[(shift, session)].add((
-                student, csection, esection
-              ))
+              section_excluded_sessions[(shift, session)].add(
+                (student, csection, esection)
+              )
       
       research_sections = list(filter(
         lambda section:
@@ -257,29 +262,36 @@ class AllocateAgent:
             research_section.enroll(student, self.course_types[RESEARCH])
             if not student.rankings.current(
               self.course_types[MATH]
-            ).enroll(student, self.course_types[MATH]):
+            ).enroll(
+              student,
+              self.course_types[MATH]
+            ):
               student.rankings.current(self.course_types[MATH]).overload(
-                student, self.course_types[MATH]
+                student,
+                self.course_types[MATH]
               )
           assert shift and session
           for student, csection, esection in section_excluded_sessions[
             (shift, session)
           ]:
             if not set(student.courses_taking).intersection({
-              self.course_types[CORE], self.course_types[ELEC]
+              self.course_types[CORE],
+              self.course_types[ELEC]
             }):
               csection.enroll(student, self.course_types[CORE])
               esection.enroll(student, self.course_types[ELEC])
           for student in filter(
             lambda student:
               not set(student.courses_taking).intersection({
-                self.course_types[CORE], self.course_types[ELEC]
+                self.course_types[CORE],
+                self.course_types[ELEC]
               }),
             research_group.students
           ):
             assert student.shift
             for course_type in [
-              self.course_types[CORE], self.course_types[ELEC]
+              self.course_types[CORE], 
+              self.course_types[ELEC]
             ]:
               if not self.try_section_student(
                 student,
@@ -304,7 +316,9 @@ class AllocateAgent:
             research_group.parent,
             shift,
             self.get_parallel_session(
-              research_group.parent, shift, session
+              research_group.parent, 
+              shift, 
+              session
             )
           )
           research_group.parent.sections.add(research_section)
@@ -312,28 +326,35 @@ class AllocateAgent:
             research_section.enroll(student, self.course_types[RESEARCH])
             if not student.rankings.current(
               self.course_types[MATH]
-            ).enroll(student, self.course_types[MATH]):
+            ).enroll(
+              student, 
+              self.course_types[MATH]
+            ):
               student.rankings.current(self.course_types[MATH]).overload(
-                student, self.course_types[MATH]
+                student,
+                self.course_types[MATH]
               )
           for student, csection, esection in section_excluded_sessions[
             (shift, session)
           ]:
             if not set(student.courses_taking).intersection({
-              self.course_types[CORE], self.course_types[ELEC]
+              self.course_types[CORE],
+              self.course_types[ELEC]
             }):
               csection.enroll(student, self.course_types[CORE])
               esection.enroll(student, self.course_types[ELEC])
           for student in filter(
             lambda student:
               not set(student.courses_taking).intersection({
-                self.course_types[CORE], self.course_types[ELEC]
+                self.course_types[CORE],
+                self.course_types[ELEC]
               }),
             research_group.students
           ):
             assert student.shift
             for course_type in [
-              self.course_types[CORE], self.course_types[ELEC]
+              self.course_types[CORE], 
+              self.course_types[ELEC]
             ]:
               if not self.try_section_student(
                 student,
@@ -368,10 +389,12 @@ class AllocateAgent:
         for student in research_group.students:
           assert research_section.enroll(student, self.course_types[RESEARCH])
           if not student.rankings.current(self.course_types[MATH]).enroll(
-            student, self.course_types[MATH]
+            student, 
+            self.course_types[MATH]
           ):
             student.rankings.current(self.course_types[MATH]).overload(
-              student, self.course_types[MATH]
+              student,
+              self.course_types[MATH]
             )
           assert student.shift
           for course_type in [self.course_types[CORE], self.course_types[ELEC]]:
@@ -411,15 +434,15 @@ class AllocateAgent:
           for e in elec.list_sections_by(shift):
             for r in research.list_sections_by(shift):
               if all([
-                c.parallel_session and e.parallel_session 
-                and c.parallel_session.session 
-                != e.parallel_session.session,
-                c.parallel_session and r.parallel_session 
-                and c.parallel_session.session 
-                != r.parallel_session.session,
-                e.parallel_session and r.parallel_session 
-                and e.parallel_session.session 
-                != r.parallel_session.session,
+                c.parallel_session and e.parallel_session and
+                  c.parallel_session.session 
+                  != e.parallel_session.session,
+                c.parallel_session and r.parallel_session and
+                  c.parallel_session.session 
+                  != r.parallel_session.session,
+                e.parallel_session and r.parallel_session and
+                  e.parallel_session.session 
+                  != r.parallel_session.session,
                 len(c.students) < c.capacity.maximum,
                 len(e.students) < e.capacity.maximum,
                 len(r.students) < r.capacity.maximum
@@ -447,11 +470,12 @@ class AllocateAgent:
         student.grade_level.courses[(self.course_types[CORE], True)]
       ):
         for elec in filter(
-          lambda x: (
+          lambda x:
+            (
               x != core 
               and x not in core.not_alongside 
               and x.qualified(student)
-          ), 
+            ), 
           student.grade_level.courses[(self.course_types[ELEC], True)]
         ):
           for c in core.sections:
@@ -622,21 +646,18 @@ class AllocateAgent:
             sessioned[(student.shift, session)].add((type, student))
         shift, session = max(sessioned, key=lambda x: len(sessioned[x]))
         if (
-          len(sessioned[(shift, session)]) 
-          >= course.capacity_section.minimum
+          len(sessioned[(shift, session)]) >= course.capacity_section.minimum
         ):
           if course.could_open_section:
-            course.sections.add(Section(
-              course, shift, self.get_parallel_session(
-                course, shift, session
-              )
-            ))
+            course.sections.add(Section(course, shift, self.get_parallel_session(course, shift, session)))
             for type, student in pairs:
               course.enroll(student, type)
           else:
             for type, student in pairs:
               student.rankings.final.pop(
-                type, 'Cannot open anymore rooms', 0
+                type, 
+                'Cannot open anymore rooms', 
+                0
               )
               if self.course_types[ELEC] not in student.courses_taking:
                 core = None
@@ -718,51 +739,15 @@ class AllocateAgent:
             student.courses_taking.pop(type)
           )
           assert section.parallel_session
-          student.attending_sessions.remove(
-            section.parallel_session.session
-          )
+          student.attending_sessions.remove(section.parallel_session.session)
           section.students.remove(student)
         assert enroll_final(student)
-        
-  def rebalance_sections(self):
-    courses = set[Course](
-      student.courses_taking[self.course_types[type]] 
-        for student in self.students for type in [CORE, ELEC]
-    )
-    for course in courses:
-      for shift in self.shifts:
-        for session in shift.sessions:
-          sections = course.list_sections_by(session)
-          students = set[Student]()
-          for section in sections:
-            for student in list(section.students):
-              section.students.remove(student)
-              for course_type, course_ in list(
-                student.courses_taking.items()
-              ):
-                if course_ == course:
-                  student.attending_sections.pop(
-                    student.courses_taking.pop(course_type)
-                  )
-                  if section.parallel_session:
-                    student.attending_sessions.remove(
-                      section.parallel_session.session
-                    )
-                  break
-              students.add(student)
-          for student in students:
-            for type in [CORE, ELEC]:
-              if self.course_types[type] not in student.courses_taking:
-                assert course.enroll(student, self.course_types[type])
-                break
-      
+  
   # The main driver for the allocation agent
   def solve(self):
     self.open_math_sections(self.course_types[MATH])
-    self.reorganize_senior_students()
     self.section_grouped()
     self.section_nogroup()
-    self.rebalance_sections()
     assert all(
       len(s.students) >= s.capacity.minimum 
       for category in self.courses 
