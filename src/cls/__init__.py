@@ -480,9 +480,11 @@ class Course:
   # function takes into consideration the capacities of sections
   def enroll(self, student: Student, course_type: CourseType):
     shifted = sorted(filter(
-      lambda section: section.shift and section.qualified(student),
-      self.sections
-    ), key=lambda section: len(section.students))
+        lambda section: section.shift and section.qualified(student),
+        self.sections
+      ),
+      key=lambda section: len(section.students)
+    )
     noshift = list(filter(
       lambda section: not section.shift and section.qualified(student),
       self.sections

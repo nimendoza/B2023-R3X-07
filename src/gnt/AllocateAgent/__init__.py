@@ -74,6 +74,7 @@ class AllocateAgent:
     random.shuffle(self.__nogroup_students)
     return self.__nogroup_students
   
+  # For each math course, open a section for each shift
   def open_math_sections(self, course_type: CourseType):
     math_courses = set[Course](
       student.rankings.current(course_type) for student in self.students
@@ -83,6 +84,8 @@ class AllocateAgent:
         section = Section(math_course, shift, None)
         math_course.sections.add(section)
         
+  # Make sure that each graduating student has or will take a
+  # course of difficulty level 2
   def reorganize_senior_students(self):
     def has_taken_level_two(student: Student):
       for course in student.courses_taken:
@@ -107,6 +110,7 @@ class AllocateAgent:
           )]))
           student.research_group = ResearchGroup('Temporary', research)
           
+  # Get parallel session of a to-be-opened section
   def get_parallel_session(
     self, 
     course: Course, 
@@ -171,6 +175,7 @@ class AllocateAgent:
       student.rankings.final.pop(course_type, 'Not qualified', 0)
     self.section_student(student, course_type, shift, available_sessions)
   
+  # Section grouped (or pseudo-grouped) students
   def section_grouped(self):
     research_courses = set[Course](
       group.parent for group in self.research_groups
@@ -366,7 +371,9 @@ class AllocateAgent:
           research_sections.append(research_section)
         research_section = random.choice(research_sections)
         for student in research_group.students:
-          assert research_section.enroll(student, self.course_types[RESEARCH])
+          assert research_section.enroll(
+            student, self.course_types[RESEARCH]
+          )
           if not student.rankings.current(self.course_types[MATH]).enroll(
             student, self.course_types[MATH]
           ):
@@ -374,7 +381,9 @@ class AllocateAgent:
               student, self.course_types[MATH]
             )
           assert student.shift
-          for course_type in [self.course_types[CORE], self.course_types[ELEC]]:
+          for course_type in [
+            self.course_types[CORE], self.course_types[ELEC]
+          ]:
             if not self.try_section_student(
               student,
               course_type,
@@ -471,13 +480,17 @@ class AllocateAgent:
                   c.enroll(student, self.course_types[CORE]) 
                   and e.enroll(student, self.course_types[ELEC])
                 )
-                if core != student.rankings.current(self.course_types[CORE]):
+                if core != student.rankings.current(
+                  self.course_types[CORE]
+                ):
                   student.rankings.final.pop(
                     self.course_types[CORE], 
                     'Needed to reshuffle sections', 
                     0
                   )
-                if elec != student.rankings.current(self.course_types[ELEC]):
+                if elec != student.rankings.current(
+                  self.course_types[ELEC]
+                ):
                   student.rankings.final.pop(
                     self.course_types[ELEC], 
                     'Needed to reshuffle sections',
@@ -724,6 +737,7 @@ class AllocateAgent:
           section.students.remove(student)
         assert enroll_final(student)
         
+  # Make sure that concurrent sections' number of students are evened out
   def rebalance_sections(self):
     courses = set[Course](
       student.courses_taking[self.course_types[type]] 

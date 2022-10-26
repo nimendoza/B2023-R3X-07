@@ -1,6 +1,5 @@
 # These imports are needed to have this segment of the software run
 from math import ceil
-from src.cls                import CourseType
 from src.gnt.AllocateAgent  import AllocateAgent
 from src.gnt.AnalyzeAgent   import AnalyzeAgent
 from src.gnt.EncodeAgent    import EncodeAgent
@@ -14,12 +13,10 @@ from time   import time
 def get_target_values(courses: str):
   encode_agent = EncodeAgent()
   encode_agent.encode_courses(courses)
-  for course_type, mlem in zip(
-    sorted(encode_agent.course_types.values()), [95, 95, 100, -1]
-  ):
+  for course_type in sorted(encode_agent.course_types.values()):
     yield (
       course_type, 
-      mlem
+      int(input(f'Target % for {course_type} (-1 for None): '))
     )
 
 # Given the file paths to the course and student input data, as well as 
@@ -66,8 +63,7 @@ def export(
     course_types = sorted(encode_agent.course_types.values())
     ranked_types = sorted(
       course_type
-        for course_type, ranked in grade_level.courses 
-          if ranked
+        for course_type, ranked in grade_level.courses if ranked
     )
     data = [['Student']]
     data[0].extend(course_types)
@@ -113,13 +109,12 @@ def export(
 
 # Driver code implementation in Python 3.10.6
 def main():
-  course_path = 'input/Test Data_ Subjects.xlsx' # input('Course input file relative path: ')
-  student_path = 'input/Test Data_ Students.xlsx' # input('Student input file relative path: ')
+  course_path = input('Course input file relative path: ')
+  student_path = input('Student input file relative path: ')
   target_values = dict(get_target_values(course_path))
   target_values = dict(
     (str(course_type), target)
-      for course_type, target
-      in target_values.items()
+      for course_type, target in target_values.items()
   )
 
   encode_agent = None
