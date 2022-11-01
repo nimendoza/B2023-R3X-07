@@ -1,5 +1,5 @@
 # These imports are needed to have the Allocation Agent run
-from src import *
+from src3 import *
 from math import ceil
 from src1.gnt.EncodeAgent import EncodeAgent
 

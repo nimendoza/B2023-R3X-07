@@ -1,5 +1,5 @@
 # There imports are needed to have the EncodeAgent run
-from src import *
+from src3 import *
 
 # Encode agent implementation in Python 3.10.6
 class EncodeAgent:

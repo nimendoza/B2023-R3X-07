@@ -1,4 +1,4 @@
-from src import *
+from src3 import *
 from collections import defaultdict
 from src1.gnt.EncodeAgent import EncodeAgent
 
